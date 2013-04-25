@@ -1,0 +1,5 @@
+name = Site Status
+description = Implements a toggable user status.
+core = 7.x
+
+files[] = site_status_form.inc

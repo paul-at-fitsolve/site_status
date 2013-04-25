@@ -1,0 +1,42 @@
+<?php
+function site_status_schema() {
+  $schema ['user_status'] = array (
+      'description' => 'The table for user status log',
+      'fields' => array (
+          'sid' => array (
+              'description' => 'The primary identifier for a status record.',
+              'type' => 'serial',
+              'unsigned' => TRUE,
+              'not null' => TRUE 
+          ),
+          'date' => array (
+              'type' => 'datetime',
+              'mysql_type' => 'datetime',
+              'not null' => TRUE
+          ),
+          'uid' => array (
+              'type' => 'int',
+              'unsigned' => TRUE,
+              'not null' => TRUE 
+          ),
+          'status' => array (
+              'type' => 'int',
+              'unsigned' => TRUE,
+              'not null' => TRUE 
+          ) 
+      ),
+      'foreign keys' => array (
+          'user' => array (
+              'table' => 'user',
+              'columns' => array (
+                  'uid' => 'uid' 
+              ) 
+          ) 
+      ),
+      'primary key' => array (
+          'sid' 
+      ) 
+  )
+  ;
+  return $schema;
+}

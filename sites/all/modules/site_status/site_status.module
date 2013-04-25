@@ -1,0 +1,189 @@
+<?php
+
+/**
+ * Implements hook_menu().
+ * Declares the form that is used to set the site-wide status message, e.g. listening to music.
+ */
+function site_status_menu() {
+  $items = array ();
+  $items ['admin/config/system/sitestatus'] = array (
+      'title' => 'Site Status',
+      'description' => 'Show a page for setting a site-wide status.',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array (
+          'site_status_admin_form' 
+      ),
+      'access callback' => 'user_access',
+      'access arguments' => array (
+          'access administration pages' 
+      ),
+      // Do not name an includes file the same as your form name, as you may run into 'undefined index in drupal_retrieve_form()' notices.
+      'file' => 'site_status_form_admin.inc' 
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function site_status_block_info() {
+  $blocks ['status'] = array (
+      'info' => t ( 'Status' ),
+      'cache' => DRUPAL_NO_CACHE 
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function site_status_block_view($delta = '') {
+  switch ($delta) {
+    case 'status' :
+      // Generates a block that renders an AJAX enabled form for toggling the user's status.
+      if (user_is_logged_in() && user_access('access content')) {
+        $block ['subject'] = t ('Toggle Status');
+        $block ['content'] = drupal_get_form ('site_status_toggle_form');
+      } else {
+        $block ['content'] = false;
+      }
+      break;
+  }
+  return $block;
+}
+
+/**
+ * Form declaration for the status toggle.
+ * @param unknown $form
+ * @param unknown $form_state
+ * @return multitype:string multitype:string  NULL The multitype:The  Ambigous <The, string, A, Optional>
+ */
+function site_status_toggle_form($form, &$form_state) {
+  $user = $GLOBALS ['user'];
+  $form = array ();
+  $form ['status'] = array (
+      '#prefix' => '<div id = "status_message_div">',
+      '#markup' => _print_status(),
+      '#suffix' => '</div>' 
+  );
+  $active = array (
+      0 => t ( 'Off' ),
+      1 => t ( 'On' ) 
+  );
+  $form ['toggle'] = array (
+      '#type' => 'radios',
+      '#title' => t ( 'User status' ),
+      '#default_value' => _get_user_status ( $user->uid ),
+      '#options' => $active,
+      '#description' => t ( 'Set your status on or off.' ),
+      '#ajax' => array (
+          'callback' => 'site_status_callback',
+          'wrapper' => 'status_message_div' 
+      ) 
+  );
+  return $form;
+}
+
+/**
+ * AJAX callback which is triggered by selecting the radios in the toggle form.
+ * All handled by Drupal's AJAX API.
+ * @param unknown $form
+ * @param unknown $form_state
+ * @return unknown
+ */
+function site_status_callback($form, $form_state) {
+  
+  // Store the appropriate value in the database.
+  $user = $GLOBALS ['user'];
+  $status = $form_state ['input'] ['toggle'];
+  $date = date ('Y-m-d H:i:s');
+  $query = db_insert ('user_status')->fields (array(
+      'date' => $date,
+      'uid' => $user->uid,
+      'status' => $status 
+  ))->execute ();
+  //Use the helper function to get the status display.
+  $form ['status'] ['#markup'] = _print_status();
+  return $form['status'];
+}
+
+
+/**
+ * Views is not in core in D7 so we have to declare the custom view to the correct API.
+ * @return multitype:string
+ */
+function site_status_views_api() {
+  return array( 'api' => '3.0-alpha1', 'path' => drupal_get_path('module','site_status'). '/views', );
+}
+
+/**
+ * Implements hook_cron().
+ *
+ * Purges older values from the user_status table.
+ */
+function site_status_cron() {
+  
+  // Get a record set with all the user ids in it.
+  $query = db_select ( 'user_status', 'us' );
+  $query->addField ( 'us', 'uid' );
+  $query->distinct ();
+  $result = $query->execute ();
+  foreach ( $result as $record ) {
+    watchdog ( __FUNCTION__, 'Purging old status records for user - ' . $record->uid, null, WATCHDOG_INFO );
+    $result1 = db_query ( 'SELECT count(sid) as count FROM {user_status} WHERE sid NOT IN (SELECT sid FROM (SELECT sid FROM {user_status} 
+        where uid = :uid ORDER BY date DESC LIMIT 10) us) and uid = :uid', array (
+        ':uid' => $record->uid 
+    ));
+    if ($result1) {
+      while ( $row = $result1->fetchAssoc () ) {
+        watchdog ( __FUNCTION__, 'Selected ' . $row ['count'] . ' records for deletion.', null, WATCHDOG_INFO );
+      }
+    }
+    $result2 = db_query ('DELETE FROM {user_status} WHERE sid NOT IN (SELECT sid FROM (SELECT sid FROM {user_status}
+        where uid = :uid ORDER BY date DESC LIMIT 10) us) and uid = :uid', array (
+        ':uid' => $record->uid 
+    ));
+    if ($result2) {
+      watchdog ( __FUNCTION__, 'Records purged for user ' . $record->uid, null, WATCHDOG_INFO );
+    }
+  }
+}
+
+
+/**
+ * This helper function returns the user's current status message - e.g. Paul is listening to music.
+ * This value can be used in the AJAX block and the user profile form.
+ * @return string
+ */
+function _print_status() {
+  $user = $GLOBALS ['user'];
+  $site_action = variable_get ( 'site_action' );
+  $state = (_get_user_status ( $user->uid ) > 0) ? ' is ' : ' is not ';
+  return $user->name . $state . $site_action;
+}
+
+/**
+ * Helper function to return the user's current status - either 0 or 1.
+ * @param unknown $uid
+ * @return number
+ */
+function _get_user_status($uid) {
+  $status = 0;
+  // Has this user got a status record?
+  //Use a joined subquery to filter by the latest status record for the given user.
+  $subquery = db_select ('user_status', 'ust');
+  $subquery->fields ('ust', array('sid'));
+  $subquery->addExpression('MAX(date)','max_date');
+  $subquery->groupBy('uid');
+  $subquery->condition('uid',$uid);
+
+  $query = db_select('user_status','us');
+  $query->fields ('us',array('status'));
+  $query->condition ('uid',$uid);
+  $query->join ($subquery, 'ust', 'max_date=us.date');
+  $result = $query->execute();
+  foreach ($result as $record) {
+    $status = $record->status;
+  }
+  return $status;
+}
